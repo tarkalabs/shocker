@@ -1,0 +1,68 @@
+#!/bin/bash
+set -e
+
+SHOCKER_DIR="$(cd $(dirname $0);pwd -P)"
+SHOCKER_PATH="$SHOCKER_DIR/$(basename $0)"
+SHOCKER_LOCAL=$HOME/.shocker
+
+init() {
+  nonroot=$USER
+  # Let's create a working directory
+  if [ ! -f $SHOCKER_LOCAL/shockerimg ]; then
+    mkdir -p $SHOCKER_LOCAL/shokerimg
+    dd if=/dev/zero of=$SHOCKER_LOCAL/shockerimg bs=512 count=4194304
+    mkfs.btrfs $SHOCKER_LOCAL/shockerimg
+  fi
+
+  # Lets mount the image
+  mkdir -p $SHOCKER_LOCAL/btrfs
+  if mount | grep /$SHOCKER_LOCAL/btrfs > /dev/null; then
+    echo "Image already mounted"
+  else
+    sudo mount -t btrfs $SHOCKER_LOCAL/shockerimg $HOME/.shocker/btrfs
+    sudo chown -R $nonroot:$nonroot $SHOCKER_LOCAL/btrfs
+  fi
+  OLDWD=$(pwd)
+
+  mkdir -p $SHOCKER_LOCAL/btrfs/images $SHOCKER_LOCAL/btrfs/containers
+}
+
+import () {
+  img=$1
+  btrfs subvol create $SHOCKER_LOCAL/btrfs/images/$img
+  cp -R $SHOCKER_DIR/images/$img/* $SHOCKER_LOCAL/btrfs/images/$img/
+}
+
+run () {
+  echo "arg is " $0 $1 $2
+
+  if [ "$1" = "init" ]; then
+    init
+  fi
+
+  if [ "$1" = "export" ]; then
+    echo "Exporting $2"
+    mkdir -p images/$2
+    cid=$(docker create $2)
+    docker export $cid | tar -C images/$2 -xf-
+    docker rm $cid
+    exit 0
+  fi
+
+  if [ "$1" = "import" ]; then
+    echo "importing $2"
+    if [ ! -d "$SHOCKER_DIR/images/$2" ]; then
+      echo "Unable to find image for $2"
+      exit -1
+    fi
+    if [ ! -d "$SHOCKER_LOCAL/btrfs/images/$2" ]; then
+      import $2
+    fi
+  fi
+}
+
+exec 1>>shocker.out
+exec 2>&1
+echo Running Shocker from $SHOCKER_DIR
+echo Shocker path is $SHOCKER_PATH
+run $*
